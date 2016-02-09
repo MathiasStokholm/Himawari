@@ -6,8 +6,10 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.os.Handler
+import android.os.SystemClock
 import android.service.wallpaper.WallpaperService
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.SurfaceHolder
 import android.view.WindowManager
 import rx.lang.kotlin.toSingletonObservable
@@ -15,12 +17,16 @@ import rx.schedulers.Schedulers
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.Executors
 
 class HimawariService : WallpaperService() {
 
     override fun onCreateEngine(): Engine? {
         return HimawariEngine()
     }
+
+    data class UrlPart(val url: String, val x: Int, val y: Int)
+    data class BitmapPart(val bitmap: Bitmap, val x: Int, val y: Int)
 
     inner class HimawariEngine : WallpaperService.Engine() {
         val WIDTH = 550 // Width of each image obtained from endpoint
@@ -80,23 +86,33 @@ class HimawariService : WallpaperService() {
         }
 
         /**
-         * Downloads and decodes a PNG image into a Bitmap
+         * Downloads and decodes a PNG image into a Bitmap on an IO thread
          */
-        fun getBitmap(url: String): Bitmap? {
-            val png = URL(url).readBytes()
-            return BitmapFactory.decodeByteArray(png, 0, png.size)
+        fun getBitmap(part: UrlPart): rx.Observable<BitmapPart> {
+            return rx.Observable.just(URL(part.url))
+                .subscribeOn(Schedulers.io())
+                .map {
+                    val bytes = it.readBytes()
+                    BitmapPart(BitmapFactory.decodeByteArray(bytes, 0, bytes.size), part.x, part.y)
+                }
         }
 
         /**
-         * Queries the json endpoint of the Himawari satellite to obtain the date of the most recent image,
-         * and then uses this date to construct a set of URLs that may be used to obtain a set of images that
-         * together make up a high-res image
+         * Obtains the entire set of images that make up the most recent capture by the Himawari satellite,
+         * and stitches the images together into a single Bitmap. The resulting Bitmap is scaled according
+         * to the user's screen.
+         * This function will schedule itself to be run every PERIOD_MILLIS (10 minutes) in order to fetch
+         * and display a more recent images
          */
-        fun getPaths(level: Int): rx.Observable<List<String>> {
-            return "http://himawari8-dl.nict.go.jp/himawari8/img/D531106/latest.json".toSingletonObservable()
+        fun update() {
+            // Create a full size Bitmap to contain the final image
+            val bitmap = Bitmap.createBitmap(WIDTH * LEVELS, WIDTH * LEVELS, Bitmap.Config.RGB_565)
+            val canvas = Canvas(bitmap)
+
+            rx.Observable.just("http://himawari8-dl.nict.go.jp/himawari8/img/D531106/latest.json")
                     .subscribeOn(Schedulers.io())
                     .map { URL(it).readText() }
-                    .map { response ->
+                    .flatMapIterable { response ->
                         val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
                         val calendar = Calendar.getInstance()
                         calendar.time = formatter.parse(response.replace("{\"date\":\"", "").split("\"")[0])
@@ -109,38 +125,16 @@ class HimawariService : WallpaperService() {
                         val minutes = String.format("%02d", calendar.get(Calendar.MINUTE))
                         val seconds = String.format("%02d", calendar.get(Calendar.SECOND))
 
-                        // Create list of urls for each part of final image
-                        (0..(level - 1)).flatMap { y -> (0..(level - 1)).map { x ->
-                            "http://himawari8-dl.nict.go.jp/himawari8/img/D531106/${level}d/$WIDTH/$year/$month/$day/$hours$minutes${seconds}_${x}_$y.png" }
-                        }}
-        }
-
-        /**
-         * Obtains the entire set of images that make up the most recent capture by the Himawari satellite,
-         * and stitches the images together into a single Bitmap. The resulting Bitmap is scaled according
-         * to the user's screen.
-         * This function will schedule itself to be run every PERIOD_MILLIS (10 minutes) in order to fetch
-         * and display a more recent images
-         */
-        fun update() {
-            getPaths(LEVELS)
-                    .flatMapIterable { it }
-                    .buffer(LEVELS)
-                    .map {
-                        // Stitch images horizontally
-                        val bitmap = Bitmap.createBitmap(WIDTH * LEVELS, WIDTH, Bitmap.Config.RGB_565)
-                        val canvas = Canvas(bitmap)
-                        it.map { getBitmap(it) }.forEachIndexed { i, bitmap -> canvas.drawBitmap(bitmap, WIDTH * i.toFloat(), 0f, null) }
-                        bitmap
-                    }.toList()
-                    .map {
-                        // Stitch horizontal images vertically
-                        val bitmap = Bitmap.createBitmap(WIDTH * LEVELS, WIDTH * LEVELS, Bitmap.Config.RGB_565)
-                        val canvas = Canvas(bitmap)
-                        it.forEachIndexed { i, bitmap -> canvas.drawBitmap(bitmap, 0f, WIDTH * i.toFloat(), null) }
-                        bitmap
-                    }
-                    .subscribe { bitmap ->
+                        // Create list of parts for each tile in final image
+                        (0..(LEVELS - 1)).flatMap { y -> (0..(LEVELS - 1)).map { x ->
+                            UrlPart("http://himawari8-dl.nict.go.jp/himawari8/img/D531106/${LEVELS}d/$WIDTH/$year/$month/$day/$hours$minutes${seconds}_${x}_$y.png", x, y)
+                        }}}
+                    .flatMap { getBitmap(it) }
+                    .observeOn(Schedulers.from(Executors.newSingleThreadExecutor()))
+                    .map { part ->
+                        // Draw into canvas using a single thread to avoid race conditions
+                        canvas.drawBitmap(part.bitmap, WIDTH * part.x.toFloat(), WIDTH * part.y.toFloat(), null)
+                    }.toList().subscribe {
                         // Scale bitmap to appropriate display size
                         img = Bitmap.createScaledBitmap(bitmap, METRICS.widthPixels, METRICS.widthPixels, true)
                         mHandler.post { draw() }
