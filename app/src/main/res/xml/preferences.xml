@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen
+    xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <CheckBoxPreference
+        android:key="@string/wifi_only_key"
+        android:title="@string/wifi_only_title"
+        android:summary="@string/wifi_only_summary"
+        android:defaultValue="true"/>
+
+    <ListPreference
+        android:key="@string/update_period_key"
+        android:title="@string/update_period_title"
+        android:summary="@string/update_period_summary"
+        android:defaultValue="10"
+        android:entries="@array/update_period_entries"
+        android:entryValues="@array/update_period_values" />
+
+</PreferenceScreen>

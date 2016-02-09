@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="update_period_entries">
+        <item>10 minutes (min)</item>
+        <item>30 minutes</item>
+        <item>1 hour</item>
+        <item>6 hours</item>
+    </string-array>
+
+    <string-array name="update_period_values">
+        <item>10</item>
+        <item>30</item>
+        <item>60</item>
+        <item>360</item>
+    </string-array>
+</resources>

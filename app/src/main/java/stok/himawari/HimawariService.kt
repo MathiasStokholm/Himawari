@@ -1,18 +1,18 @@
 package stok.himawari
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.net.ConnectivityManager
 import android.os.Handler
-import android.os.SystemClock
 import android.service.wallpaper.WallpaperService
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.WindowManager
-import rx.lang.kotlin.toSingletonObservable
 import rx.schedulers.Schedulers
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -36,20 +36,33 @@ class HimawariService : WallpaperService() {
             metrics // Size of display
         }
         val LEVELS = Math.ceil(METRICS.widthPixels / WIDTH.toDouble()).toInt()  // Number of images to stitch together in either direction
-        val PERIOD_MILLIS = 10 * 60 * 1000L  // Satellite updates once every 10 minutes
 
-        private var img: Bitmap? = null
-        private var mVisible = false
-        private var mOffset = 0f
-        private val mHandler = Handler()
+        // Shared preferences and listener
+        val mSharedPreferences = getSharedPreferences(SHARED_PREFERENCES_KEY, MODE_PRIVATE)
+        val mPreferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, key ->
+            when (key) {
+                getString(R.string.wifi_only_key) -> mWifiOnly = sharedPreferences.getBoolean(key, false)
+                getString(R.string.update_period_key) -> mPeriodMillis = sharedPreferences.getString(key, "10").toInt() * 60 * 1000L
+            }
+            mHandler.post { update() }
+        }
+
+        val mHandler = Handler()
+        var img: Bitmap? = null
+        var mVisible = false
+        var mWifiOnly = true
+        var mOffset = 0f
+        var mPeriodMillis = 10 * 60 * 1000L  // Satellite updates once every 10 minutes (default value)
 
         override fun onSurfaceCreated(holder: SurfaceHolder?) {
             super.onSurfaceCreated(holder)
+            mSharedPreferences.registerOnSharedPreferenceChangeListener(mPreferenceChangeListener)
             mHandler.post { update() }
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder?) {
             super.onSurfaceDestroyed(holder)
+            mSharedPreferences.unregisterOnSharedPreferenceChangeListener(mPreferenceChangeListener)
             mHandler.removeCallbacks(null)
         }
 
@@ -105,43 +118,58 @@ class HimawariService : WallpaperService() {
          * and display a more recent images
          */
         fun update() {
-            // Create a full size Bitmap to contain the final image
-            val bitmap = Bitmap.createBitmap(WIDTH * LEVELS, WIDTH * LEVELS, Bitmap.Config.RGB_565)
-            val canvas = Canvas(bitmap)
+            // Check if device is connected to wifi or allowed to use cellular network
+            if (isOnWifi() || !mWifiOnly) {
 
-            rx.Observable.just("http://himawari8-dl.nict.go.jp/himawari8/img/D531106/latest.json")
-                    .subscribeOn(Schedulers.io())
-                    .map { URL(it).readText() }
-                    .flatMapIterable { response ->
-                        val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-                        val calendar = Calendar.getInstance()
-                        calendar.time = formatter.parse(response.replace("{\"date\":\"", "").split("\"")[0])
+                // Create a full size Bitmap to contain the final image
+                val bitmap = Bitmap.createBitmap(WIDTH * LEVELS, WIDTH * LEVELS, Bitmap.Config.RGB_565)
+                val canvas = Canvas(bitmap)
 
-                        // Extract correctly formatted values
-                        val year = calendar.get(Calendar.YEAR)
-                        val month = String.format("%02d", calendar.get(Calendar.MONTH) + 1)
-                        val day = String.format("%02d", calendar.get(Calendar.DATE))
-                        val hours = String.format("%02d", calendar.get(Calendar.HOUR_OF_DAY))
-                        val minutes = String.format("%02d", calendar.get(Calendar.MINUTE))
-                        val seconds = String.format("%02d", calendar.get(Calendar.SECOND))
+                // Request information about the latest capture (date and filename)
+                rx.Observable.just("http://himawari8-dl.nict.go.jp/himawari8/img/D531106/latest.json")
+                        .subscribeOn(Schedulers.io())
+                        .map { URL(it).readText() }
+                        .flatMapIterable { response ->
+                            // Extract date and time string from json response
+                            val calendar = Calendar.getInstance()
+                            val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+                            calendar.time = formatter.parse(response.replace("{\"date\":\"", "").split("\"")[0])
 
-                        // Create list of parts for each tile in final image
-                        (0..(LEVELS - 1)).flatMap { y -> (0..(LEVELS - 1)).map { x ->
-                            UrlPart("http://himawari8-dl.nict.go.jp/himawari8/img/D531106/${LEVELS}d/$WIDTH/$year/$month/$day/$hours$minutes${seconds}_${x}_$y.png", x, y)
-                        }}}
-                    .flatMap { getBitmap(it) }
-                    .observeOn(Schedulers.from(Executors.newSingleThreadExecutor()))
-                    .map { part ->
-                        // Draw into canvas using a single thread to avoid race conditions
-                        canvas.drawBitmap(part.bitmap, WIDTH * part.x.toFloat(), WIDTH * part.y.toFloat(), null)
-                    }.toList().subscribe {
-                        // Scale bitmap to appropriate display size
-                        img = Bitmap.createScaledBitmap(bitmap, METRICS.widthPixels, METRICS.widthPixels, true)
-                        mHandler.post { draw() }
-                    }
+                            // Extract correctly formatted values
+                            val year = calendar.get(Calendar.YEAR)
+                            val month = String.format("%02d", calendar.get(Calendar.MONTH) + 1)
+                            val day = String.format("%02d", calendar.get(Calendar.DATE))
+                            val hours = String.format("%02d", calendar.get(Calendar.HOUR_OF_DAY))
+                            val minutes = String.format("%02d", calendar.get(Calendar.MINUTE))
+                            val seconds = String.format("%02d", calendar.get(Calendar.SECOND))
 
-            // Reschedule update
-            mHandler.postDelayed({ update() }, PERIOD_MILLIS)
+                            // Create list of parts for each tile in final image
+                            (0..(LEVELS - 1)).flatMap { y -> (0..(LEVELS - 1)).map { x ->
+                                UrlPart("http://himawari8-dl.nict.go.jp/himawari8/img/D531106/${LEVELS}d/$WIDTH/$year/$month/$day/$hours$minutes${seconds}_${x}_$y.png", x, y)
+                            }}}
+                        .flatMap { getBitmap(it) }  // Download parts of image in parallel
+                        .observeOn(Schedulers.from(Executors.newSingleThreadExecutor()))
+                        .map { part ->
+                            // Draw into canvas using a single thread to avoid race conditions
+                            canvas.drawBitmap(part.bitmap, WIDTH * part.x.toFloat(), WIDTH * part.y.toFloat(), null)
+                        }.toList().subscribe({
+                    // Scale bitmap to appropriate display size and redraw
+                    img = Bitmap.createScaledBitmap(bitmap, METRICS.widthPixels, METRICS.widthPixels, true)
+                    mHandler.post { draw() }
+                }, { err ->
+                    Log.e(HimawariService::class.java.simpleName, "Error fetching new image: ${err.message}")
+                })
+            }
+
+            // Clear all currently processing events and reschedule update
+            mHandler.removeCallbacks(null)
+            mHandler.postDelayed({ update() }, mPeriodMillis)
+        }
+
+        fun isOnWifi(): Boolean {
+            val connectivityManager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+            val networkInfo = connectivityManager.getNetworkInfo(ConnectivityManager.TYPE_WIFI)
+            return networkInfo.isConnected
         }
     }
 }
