@@ -120,9 +120,9 @@ class HimawariService : WallpaperService() {
         /**
          * Obtains the entire set of images that make up the most recent capture by the Himawari satellite,
          * and stitches the images together into a single Bitmap. The resulting Bitmap is scaled according
-         * to the user's screen.
-         * This function will schedule itself to be run every PERIOD_MILLIS (10 minutes) in order to fetch
-         * and display a more recent images
+         * to the user's screen and the set zoom level.
+         * This function will schedule itself to be run every PERIOD_MILLIS (10 minutes default) in order to fetch
+         * and display the most recent image.
          */
         fun update() {
             // Check if device is connected to wifi or allowed to use cellular network

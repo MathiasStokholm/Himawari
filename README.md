@@ -12,7 +12,7 @@ Live Wallpaper for Android showcasing live images of the Earth captured by the H
 ## Preferences
 * Toggle whether to only download over Wi-Fi, or use cellular data network (default is Wi-Fi only)
 * Set update frequency (default is every 10 minutes)
-* Set zoom level (default will fit the entire Earth on scren)
+* Set zoom level (default will fit the entire Earth on screen)
 
 ### Inspiration
 * Python Script for OSX: https://gist.github.com/willwhitney/e9e2c42885385c51843e
