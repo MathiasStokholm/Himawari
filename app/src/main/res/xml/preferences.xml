@@ -16,4 +16,10 @@
         android:entries="@array/update_period_entries"
         android:entryValues="@array/update_period_values" />
 
+    <EditTextPreference
+        android:key="@string/zoom_level_key"
+        android:title="@string/zoom_level_title"
+        android:summary="@string/zoom_level_summary"
+        android:defaultValue="1.0" />
+
 </PreferenceScreen>

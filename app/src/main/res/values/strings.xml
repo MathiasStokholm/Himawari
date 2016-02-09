@@ -6,4 +6,7 @@
     <string name="update_period_key">update_period</string>
     <string name="update_period_title">Update Period</string>
     <string name="update_period_summary">Select how often to fetch a new image</string>
+    <string name="zoom_level_key">zoom_level</string>
+    <string name="zoom_level_title">Zoom Level</string>
+    <string name="zoom_level_summary">Select level of zoom (default 1)</string>
 </resources>

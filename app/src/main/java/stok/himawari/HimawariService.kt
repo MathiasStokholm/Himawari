@@ -14,11 +14,15 @@ import android.util.Log
 import android.view.SurfaceHolder
 import android.view.WindowManager
 import rx.schedulers.Schedulers
+import rx.Observable
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.Executors
 
+/**
+ * Service for downloading and displaying images captured by the Himawari satellite as a live wallpaper
+ */
 class HimawariService : WallpaperService() {
 
     override fun onCreateEngine(): Engine? {
@@ -35,7 +39,6 @@ class HimawariService : WallpaperService() {
             (getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(metrics)
             metrics // Size of display
         }
-        val LEVELS = Math.ceil(METRICS.widthPixels / WIDTH.toDouble()).toInt()  // Number of images to stitch together in either direction
 
         // Shared preferences and listener
         val mSharedPreferences = getSharedPreferences(SHARED_PREFERENCES_KEY, MODE_PRIVATE)
@@ -43,6 +46,7 @@ class HimawariService : WallpaperService() {
             when (key) {
                 getString(R.string.wifi_only_key) -> mWifiOnly = sharedPreferences.getBoolean(key, false)
                 getString(R.string.update_period_key) -> mPeriodMillis = sharedPreferences.getString(key, "10").toInt() * 60 * 1000L
+                getString(R.string.zoom_level_key) -> updateZoom(sharedPreferences.getString(key, "1.0").toDouble())
             }
             mHandler.post { update() }
         }
@@ -52,6 +56,8 @@ class HimawariService : WallpaperService() {
         var mVisible = false
         var mWifiOnly = true
         var mOffset = 0f
+        var mZoom = 1.0
+        var mLevels = updateZoom(mZoom)      // Number of images to stitch together in either direction
         var mPeriodMillis = 10 * 60 * 1000L  // Satellite updates once every 10 minutes (default value)
 
         override fun onSurfaceCreated(holder: SurfaceHolder?) {
@@ -79,7 +85,7 @@ class HimawariService : WallpaperService() {
             super.onOffsetsChanged(xOffset, yOffset, xOffsetStep, yOffsetStep, xPixelOffset, yPixelOffset)
 
             // User has scrolled. Apply a small offset and redraw image
-            mOffset = -xOffset * METRICS.widthPixels / 4
+            mOffset = -xOffset * (METRICS.widthPixels * mZoom).toInt() / 4
             if (mVisible)
                 mHandler.post { draw() }
         }
@@ -92,7 +98,8 @@ class HimawariService : WallpaperService() {
                 val canvas = surfaceHolder.lockCanvas()
                 if (canvas != null) {
                     canvas.drawColor(Color.BLACK)
-                    canvas.drawBitmap(img, mOffset, (METRICS.heightPixels - img!!.height) / 2f, null)
+                    canvas.drawBitmap(img, mOffset + (METRICS.widthPixels - img!!.width) / 2f,
+                            (METRICS.heightPixels - img!!.height) / 2f, null)
                     surfaceHolder.unlockCanvasAndPost(canvas)
                 }
             }
@@ -101,8 +108,8 @@ class HimawariService : WallpaperService() {
         /**
          * Downloads and decodes a PNG image into a Bitmap on an IO thread
          */
-        fun getBitmap(part: UrlPart): rx.Observable<BitmapPart> {
-            return rx.Observable.just(URL(part.url))
+        fun getBitmap(part: UrlPart): Observable<BitmapPart> {
+            return Observable.just(URL(part.url))
                 .subscribeOn(Schedulers.io())
                 .map {
                     val bytes = it.readBytes()
@@ -122,11 +129,11 @@ class HimawariService : WallpaperService() {
             if (isOnWifi() || !mWifiOnly) {
 
                 // Create a full size Bitmap to contain the final image
-                val bitmap = Bitmap.createBitmap(WIDTH * LEVELS, WIDTH * LEVELS, Bitmap.Config.RGB_565)
+                val bitmap = Bitmap.createBitmap(WIDTH * mLevels, WIDTH * mLevels, Bitmap.Config.RGB_565)
                 val canvas = Canvas(bitmap)
 
                 // Request information about the latest capture (date and filename)
-                rx.Observable.just("http://himawari8-dl.nict.go.jp/himawari8/img/D531106/latest.json")
+                Observable.just("http://himawari8-dl.nict.go.jp/himawari8/img/D531106/latest.json")
                         .subscribeOn(Schedulers.io())
                         .map { URL(it).readText() }
                         .flatMapIterable { response ->
@@ -144,8 +151,8 @@ class HimawariService : WallpaperService() {
                             val seconds = String.format("%02d", calendar.get(Calendar.SECOND))
 
                             // Create list of parts for each tile in final image
-                            (0..(LEVELS - 1)).flatMap { y -> (0..(LEVELS - 1)).map { x ->
-                                UrlPart("http://himawari8-dl.nict.go.jp/himawari8/img/D531106/${LEVELS}d/$WIDTH/$year/$month/$day/$hours$minutes${seconds}_${x}_$y.png", x, y)
+                            (0..(mLevels - 1)).flatMap { y -> (0..(mLevels - 1)).map { x ->
+                                UrlPart("http://himawari8-dl.nict.go.jp/himawari8/img/D531106/${mLevels}d/$WIDTH/$year/$month/$day/$hours$minutes${seconds}_${x}_$y.png", x, y)
                             }}}
                         .flatMap { getBitmap(it) }  // Download parts of image in parallel
                         .observeOn(Schedulers.from(Executors.newSingleThreadExecutor()))
@@ -153,12 +160,13 @@ class HimawariService : WallpaperService() {
                             // Draw into canvas using a single thread to avoid race conditions
                             canvas.drawBitmap(part.bitmap, WIDTH * part.x.toFloat(), WIDTH * part.y.toFloat(), null)
                         }.toList().subscribe({
-                    // Scale bitmap to appropriate display size and redraw
-                    img = Bitmap.createScaledBitmap(bitmap, METRICS.widthPixels, METRICS.widthPixels, true)
-                    mHandler.post { draw() }
-                }, { err ->
-                    Log.e(HimawariService::class.java.simpleName, "Error fetching new image: ${err.message}")
-                })
+                            // Scale bitmap to appropriate display size and redraw
+                            val size = (METRICS.widthPixels * mZoom).toInt()
+                            img = Bitmap.createScaledBitmap(bitmap, size, size, true)
+                            mHandler.post { draw() }
+                        }, { err ->
+                            Log.e(HimawariService::class.java.simpleName, "Error fetching new image: ${err.message}")
+                        })
             }
 
             // Clear all currently processing events and reschedule update
@@ -166,10 +174,25 @@ class HimawariService : WallpaperService() {
             mHandler.postDelayed({ update() }, mPeriodMillis)
         }
 
+        /**
+         * Returns whether the device is currently connected to a Wi-Fi network
+         */
         fun isOnWifi(): Boolean {
             val connectivityManager = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
             val networkInfo = connectivityManager.getNetworkInfo(ConnectivityManager.TYPE_WIFI)
             return networkInfo.isConnected
+        }
+
+        /**
+         * Updates the current zoom level and calculates a new number of images to acquire
+         * returns the number of images as a convenience
+         */
+        fun updateZoom(newZoom: Double): Int {
+            if (newZoom in 0.1 .. 10.0) {
+                mZoom = newZoom
+                mLevels = Math.ceil(METRICS.widthPixels * mZoom / WIDTH).toInt()
+            }
+            return mLevels
         }
     }
 }
