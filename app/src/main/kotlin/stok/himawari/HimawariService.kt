@@ -190,7 +190,10 @@ class HimawariService : WallpaperService() {
         fun updateZoom(newZoom: Double): Int {
             if (newZoom in 0.1 .. 10.0) {
                 mZoom = newZoom
-                mLevels = Math.ceil(METRICS.widthPixels * mZoom / WIDTH).toInt()
+
+                // Ensure that mLevels is set to a power of 2 rounded up
+                val x = METRICS.widthPixels * mZoom / WIDTH
+                mLevels = Math.pow(2.0, Math.ceil(Math.log(x)/Math.log(2.0))).toInt()
             }
             return mLevels
         }
