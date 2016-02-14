@@ -47,6 +47,10 @@ class HimawariService : WallpaperService() {
                 getString(R.string.wifi_only_key) -> mWifiOnly = sharedPreferences.getBoolean(key, false)
                 getString(R.string.update_period_key) -> mPeriodMillis = sharedPreferences.getString(key, "10").toInt() * 60 * 1000L
                 getString(R.string.zoom_level_key) -> updateZoom(sharedPreferences.getString(key, "1.0").toDouble())
+                getString(R.string.forced_resolution_key) -> {
+                    mForcedLevels = sharedPreferences.getString(key, "-1").toInt()
+                    updateZoom(mZoom)
+                }
             }
             mHandler.post { update() }
         }
@@ -57,6 +61,7 @@ class HimawariService : WallpaperService() {
         var mWifiOnly = true
         var mOffset = 0f
         var mZoom = 1.0
+        var mForcedLevels = -1               // Forced resolution, -1 indicates non-forced resolution detection
         var mLevels = updateZoom(mZoom)      // Number of images to stitch together in either direction
         var mPeriodMillis = 10 * 60 * 1000L  // Satellite updates once every 10 minutes (default value)
 
@@ -191,9 +196,14 @@ class HimawariService : WallpaperService() {
             if (newZoom in 0.1 .. 10.0) {
                 mZoom = newZoom
 
-                // Ensure that mLevels is set to a power of 2 rounded up
-                val x = METRICS.widthPixels * mZoom / WIDTH
-                mLevels = Math.pow(2.0, Math.ceil(Math.log(x)/Math.log(2.0))).toInt()
+                if (mForcedLevels < 0) {
+                    // Ensure that mLevels is set to a power of 2 rounded up
+                    val x = METRICS.widthPixels * mZoom / WIDTH
+                    mLevels = Math.pow(2.0, Math.ceil(Math.log(x) / Math.log(2.0))).toInt()
+                } else {
+                    // User has forced the resolution of downloaded images
+                    mLevels = mForcedLevels
+                }
             }
             return mLevels
         }

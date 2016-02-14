@@ -9,4 +9,7 @@
     <string name="zoom_level_key">zoom_level</string>
     <string name="zoom_level_title">Zoom Level</string>
     <string name="zoom_level_summary">Select level of zoom (default 1)</string>
+    <string name="forced_resolution_key">forced_resolution</string>
+    <string name="forced_resolution_title">Forced Resolution</string>
+    <string name="forced_resolution_summary">Force app to download images at a specific resolution. Default behaviour is to download images as most appropriate for screen size and zoom level</string>
 </resources>

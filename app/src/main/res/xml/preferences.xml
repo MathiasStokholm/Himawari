@@ -22,4 +22,12 @@
         android:summary="@string/zoom_level_summary"
         android:defaultValue="1.0" />
 
+    <ListPreference
+        android:key="@string/forced_resolution_key"
+        android:title="@string/forced_resolution_title"
+        android:summary="@string/forced_resolution_summary"
+        android:defaultValue="-1"
+        android:entries="@array/forced_resolution_entries"
+        android:entryValues="@array/forced_resolution_values" />
+
 </PreferenceScreen>

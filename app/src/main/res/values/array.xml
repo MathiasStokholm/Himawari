@@ -13,4 +13,18 @@
         <item>60</item>
         <item>360</item>
     </string-array>
+
+    <string-array name="forced_resolution_entries">
+        <item>Disabled</item>
+        <item>550x550 px</item>
+        <item>1100x1100 px</item>
+        <item>2200x2200 px</item>
+    </string-array>
+
+    <string-array name="forced_resolution_values">
+        <item>-1</item>
+        <item>1</item>
+        <item>2</item>
+        <item>4</item>
+    </string-array>
 </resources>
